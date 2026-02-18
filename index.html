@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HAR Cache Analyzer</title>
+<meta name="description" content="HAR dosyalarını yükleyerek cache performansını analiz edin. Cold vs Warm cache karşılaştırması yapın.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+<style>
+:root {
+  --bg: #0f172a; --surface: #1e293b; --surface2: #334155;
+  --text: #e2e8f0; --text-muted: #94a3b8; --border: #475569;
+  --green: #22c55e; --blue: #3b82f6; --yellow: #eab308;
+  --red: #ef4444; --orange: #f97316; --purple: #a855f7;
+  --cyan: #06b6d4; --pink: #ec4899;
+  --radius: 12px;
+}
+[data-theme="light"] {
+  --bg: #f1f5f9; --surface: #ffffff; --surface2: #e2e8f0;
+  --text: #1e293b; --text-muted: #64748b; --border: #cbd5e1;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+  line-height: 1.6; min-height: 100vh;
+}
+.container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+/* Header */
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 32px; flex-wrap: wrap; gap: 16px;
+}
+.header h1 { font-size: 28px; font-weight: 700; }
+.header h1 span { color: var(--cyan); }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.header-meta { color: var(--text-muted); font-size: 13px; }
+.theme-toggle, .btn {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 16px; border-radius: 8px;
+  cursor: pointer; font-size: 13px; transition: all 0.2s;
+}
+.theme-toggle:hover, .btn:hover { border-color: var(--cyan); }
+.btn-primary { background: var(--cyan); color: #0f172a; border-color: var(--cyan); font-weight: 600; }
+.btn-primary:hover { opacity: 0.9; }
+
+/* Upload area */
+.upload-section {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; min-height: 60vh; padding: 40px;
+}
+.upload-hero { text-align: center; margin-bottom: 48px; }
+.upload-hero h2 { font-size: 36px; font-weight: 700; margin-bottom: 12px; }
+.upload-hero h2 span { color: var(--cyan); }
+.upload-hero p { color: var(--text-muted); font-size: 16px; max-width: 600px; margin: 0 auto; }
+
+.upload-grid { display: grid; grid-template-columns: 1fr 60px 1fr; gap: 0; align-items: stretch; width: 100%; max-width: 800px; }
+.upload-grid .vs {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 700; color: var(--text-muted);
+}
+
+.drop-zone {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  padding: 40px 24px; text-align: center; cursor: pointer;
+  transition: all 0.3s; position: relative; min-height: 200px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--cyan); background: rgba(6,182,212,0.05);
+}
+.drop-zone.has-file { border-color: var(--green); background: rgba(34,197,94,0.05); }
+.drop-zone .icon { font-size: 48px; margin-bottom: 12px; }
+.drop-zone .label { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.drop-zone .sublabel { font-size: 12px; color: var(--text-muted); }
+.drop-zone .file-info {
+  font-size: 13px; color: var(--green); margin-top: 8px; font-weight: 500;
+}
+.drop-zone input { display: none; }
+.drop-zone .remove-btn {
+  position: absolute; top: 8px; right: 8px; background: var(--red);
+  color: #fff; border: none; border-radius: 50%; width: 24px; height: 24px;
+  cursor: pointer; font-size: 14px; display: none; align-items: center; justify-content: center;
+}
+.drop-zone.has-file .remove-btn { display: flex; }
+
+.analyze-bar {
+  margin-top: 32px; display: flex; gap: 12px; align-items: center;
+  width: 100%; max-width: 800px; justify-content: center;
+}
+.analyze-btn {
+  padding: 14px 48px; font-size: 16px; font-weight: 700;
+  background: var(--cyan); color: #0f172a; border: none;
+  border-radius: var(--radius); cursor: pointer; transition: all 0.2s;
+}
+.analyze-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(6,182,212,0.3); }
+.analyze-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.privacy-note {
+  margin-top: 24px; font-size: 12px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* Report section (hidden initially) */
+#report-section { display: none; }
+
+/* Tabs */
+.tabs {
+  display: flex; gap: 4px; margin-bottom: 24px;
+  background: var(--surface); border-radius: var(--radius);
+  padding: 4px; width: fit-content; flex-wrap: wrap;
+}
+.tab {
+  padding: 10px 20px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--text-muted);
+  transition: all 0.2s; border: none; background: none;
+}
+.tab.active { background: var(--cyan); color: #0f172a; font-weight: 600; }
+.tab:hover:not(.active) { color: var(--text); background: var(--surface2); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Cards */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px; margin-bottom: 20px;
+}
+.card-title {
+  font-size: 16px; font-weight: 600; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px;
+}
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+
+/* Stats */
+.stat-row { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.stat-box {
+  flex: 1; min-width: 140px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px; text-align: center;
+}
+.stat-box .value { font-size: 28px; font-weight: 700; }
+.stat-box .label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.stat-box.green .value { color: var(--green); }
+.stat-box.blue .value { color: var(--blue); }
+.stat-box.red .value { color: var(--red); }
+.stat-box.orange .value { color: var(--orange); }
+.stat-box.cyan .value { color: var(--cyan); }
+
+/* Bar chart */
+.bar-chart { display: flex; flex-direction: column; gap: 12px; }
+.bar-row { display: flex; align-items: center; gap: 12px; }
+.bar-label { min-width: 120px; font-size: 13px; font-weight: 500; text-align: right; }
+.bar-track { flex: 1; height: 28px; background: var(--surface2); border-radius: 6px; overflow: hidden; }
+.bar-fill {
+  height: 100%; border-radius: 6px; display: flex; align-items: center;
+  padding: 0 10px; font-size: 12px; font-weight: 600; color: #fff;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); min-width: fit-content;
+}
+.bar-value { font-size: 13px; min-width: 80px; color: var(--text-muted); }
+
+/* Donut */
+.donut-container { display: flex; align-items: center; gap: 32px; flex-wrap: wrap; justify-content: center; }
+.donut-svg { width: 200px; height: 200px; }
+.donut-legend { display: flex; flex-direction: column; gap: 8px; }
+.legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.legend-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+.legend-count { color: var(--text-muted); min-width: 40px; text-align: right; }
+
+/* Table */
+.table-wrapper { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th {
+  text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--border);
+  color: var(--text-muted); font-weight: 600; cursor: pointer;
+  user-select: none; white-space: nowrap;
+  position: relative;
+}
+thead th:hover { color: var(--cyan); }
+thead th.sorted-asc::after { content: ' ▲'; color: var(--cyan); }
+thead th.sorted-desc::after { content: ' ▼'; color: var(--cyan); }
+tbody tr { border-bottom: 1px solid var(--border); transition: background 0.15s; }
+tbody tr:hover { background: var(--surface2); }
+td { padding: 8px 12px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td.url-cell { font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 12px; }
+/* Column resize */
+.col-resizer {
+  position: absolute; right: -2px; top: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 2;
+}
+.col-resizer:hover::after, .col-resizer.active::after {
+  content: ''; position: absolute; left: 2px; top: 0; bottom: 0;
+  width: 2px; background: var(--cyan);
+}
+body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
+body.col-resizing { user-select: none; }
+
+/* Badges */
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+.badge-blue { background: rgba(59,130,246,0.15); color: var(--blue); }
+.badge-yellow { background: rgba(234,179,8,0.15); color: var(--yellow); }
+.badge-red { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-orange { background: rgba(249,115,22,0.15); color: var(--orange); }
+.badge-purple { background: rgba(168,85,247,0.15); color: var(--purple); }
+.badge-cyan { background: rgba(6,182,212,0.15); color: var(--cyan); }
+.badge-pink { background: rgba(236,72,153,0.15); color: var(--pink); }
+
+/* Filters */
+.filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.filter-btn {
+  padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+  cursor: pointer; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-muted); transition: all 0.2s;
+}
+.filter-btn.active { background: var(--cyan); color: #0f172a; border-color: var(--cyan); }
+.filter-btn:hover:not(.active) { border-color: var(--cyan); color: var(--text); }
+.search-box {
+  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 13px; width: 300px; max-width: 100%;
+}
+.search-box:focus { outline: none; border-color: var(--cyan); }
+.search-box::placeholder { color: var(--text-muted); }
+
+/* Recommendations */
+.rec-item {
+  padding: 12px 16px; border-left: 3px solid var(--yellow);
+  background: rgba(234,179,8,0.05); margin-bottom: 8px; border-radius: 0 8px 8px 0;
+}
+.rec-item.critical { border-left-color: var(--red); background: rgba(239,68,68,0.05); }
+.rec-item.good { border-left-color: var(--green); background: rgba(34,197,94,0.05); }
+.rec-item .rec-title { font-weight: 600; font-size: 14px; }
+.rec-item .rec-desc { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.rec-item code {
+  background: var(--surface2); padding: 2px 6px; border-radius: 4px;
+  font-family: 'SF Mono', Monaco, monospace; font-size: 12px;
+}
+
+/* Column toggle */
+.col-toggle-wrap { position: relative; display: inline-block; }
+.col-toggle-btn {
+  padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+  cursor: pointer; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-muted); transition: all 0.2s;
+}
+.col-toggle-btn:hover { border-color: var(--cyan); color: var(--text); }
+.col-toggle-panel {
+  display: none; position: absolute; top: 100%; left: 0; z-index: 50;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px; margin-top: 4px;
+  min-width: 200px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.col-toggle-panel.open { display: block; }
+.col-toggle-panel label {
+  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  font-size: 13px; cursor: pointer; color: var(--text);
+}
+.col-toggle-panel label:hover { color: var(--cyan); }
+.col-toggle-panel input[type=checkbox] {
+  accent-color: var(--cyan); width: 15px; height: 15px; cursor: pointer;
+}
+.table-toolbar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
+}
+
+/* Column visibility */
+table [data-col] { transition: opacity 0.15s; }
+table .col-hidden { display: none; }
+
+/* Footer */
+.footer {
+  text-align: center; padding: 32px; color: var(--text-muted); font-size: 12px;
+  border-top: 1px solid var(--border); margin-top: 48px;
+}
+.footer a { color: var(--cyan); text-decoration: none; }
+
+@media (max-width: 768px) {
+  .upload-grid { grid-template-columns: 1fr; gap: 16px; }
+  .upload-grid .vs { padding: 8px; }
+  .stat-row { flex-direction: column; }
+  .bar-label { min-width: 80px; font-size: 12px; }
+  .header h1 { font-size: 22px; }
+  .upload-hero h2 { font-size: 24px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- HEADER -->
+  <div class="header">
+    <div>
+      <h1>🔍 HAR <span>Cache Analyzer</span></h1>
+      <div class="header-meta">Browser cache performansını analiz edin</div>
+    </div>
+    <div class="header-right">
+      <button class="btn" id="new-analysis-btn" style="display:none" onclick="resetApp()">+ Yeni Analiz</button>
+      <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
+    </div>
+  </div>
+
+  <!-- UPLOAD SECTION -->
+  <div id="upload-section" class="upload-section">
+    <div class="upload-hero">
+      <h2>HAR Dosyalarını <span>Analiz Et</span></h2>
+      <p>Chrome DevTools → Network → Sağ tık → "Save all as HAR with content" ile export ettiğin dosyaları buraya sürükle.</p>
+    </div>
+
+    <div class="upload-grid">
+      <div class="drop-zone" id="drop-cold" onclick="document.getElementById('file-cold').click()">
+        <button class="remove-btn" onclick="event.stopPropagation(); removeFile('cold')">×</button>
+        <div class="icon">📦</div>
+        <div class="label">İlk Ziyaret (Cold Cache)</div>
+        <div class="sublabel">Incognito'da ilk sayfa yüklemesi</div>
+        <div class="file-info" id="cold-info"></div>
+        <input type="file" id="file-cold" accept=".har" onchange="handleFile(this, 'cold')">
+      </div>
+
+      <div class="vs">VS</div>
+
+      <div class="drop-zone" id="drop-warm" onclick="document.getElementById('file-warm').click()">
+        <button class="remove-btn" onclick="event.stopPropagation(); removeFile('warm')">×</button>
+        <div class="icon">♻️</div>
+        <div class="label">Tekrar Ziyaret (Warm Cache)</div>
+        <div class="sublabel">Aynı sekmede normal refresh sonrası</div>
+        <div class="file-info" id="warm-info"></div>
+        <input type="file" id="file-warm" accept=".har" onchange="handleFile(this, 'warm')">
+      </div>
+    </div>
+
+    <div class="analyze-bar">
+      <button class="analyze-btn" id="analyze-btn" disabled onclick="analyze()">🚀 Analiz Et</button>
+    </div>
+
+    <div class="privacy-note">🔒 Tüm veriler tarayıcında işlenir. Hiçbir veri sunucuya gönderilmez.</div>
+  </div>
+
+  <!-- REPORT SECTION -->
+  <div id="report-section">
+    <div id="tabs-container"></div>
+    <div id="report-content"></div>
+  </div>
+</div>
+
+<div class="footer">
+  HAR Cache Analyzer · Tüm veriler tarayıcıda işlenir · <a href="https://github.com" target="_blank">GitHub</a>
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+//  PARSER (browser version)
+// ══════════════════════════════════════════════
+
+function shortUrl(url, maxLen = 70) {
+  try {
+    const u = new URL(url);
+    const p = u.pathname + u.search;
+    return p.length > maxLen ? '...' + p.slice(p.length - maxLen) : p;
+  } catch { return url.slice(-maxLen); }
+}
+
+function formatSize(bytes) {
+  if (bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function humanizeCC(cc) {
+  if (!cc || cc === 'N/A') return cc;
+  return cc.replace(/max-age=(\d+)/g, (_, s) => {
+    s = parseInt(s);
+    if (s === 0) return 'max-age=0';
+    if (s < 60) return `max-age=${s}s`;
+    if (s < 3600) return `max-age=${Math.round(s/60)}dk`;
+    if (s < 86400) return `max-age=~${(s/3600).toFixed(1)} saat`;
+    if (s < 604800) return `max-age=~${(s/86400).toFixed(1)} gün`;
+    if (s < 2592000) return `max-age=~${Math.round(s/604800)} hafta`;
+    if (s < 31536000) return `max-age=~${Math.round(s/2592000)} ay`;
+    return `max-age=~${(s/31536000).toFixed(1)} yıl`;
+  });
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function getHeaders(entry) {
+  const h = {};
+  for (const hdr of entry.response.headers) h[hdr.name.toLowerCase()] = hdr.value;
+  return h;
+}
+
+function detectCache(entry) {
+  const h = getHeaders(entry), r = entry.response;
+  const fc = entry._fromCache || '', ts = r._transferSize ?? -1, st = r.status;
+
+  // 1) Browser açıkça söylüyor
+  if (fc === 'memory') return 'MEMORY_CACHE';
+  if (fc === 'disk') return 'DISK_CACHE';
+  if (entry._was_fetched_via_service_worker) return 'SERVICE_WORKER';
+
+  // 2) 304 — sunucu "değişmedi" dedi
+  if (st === 304) return 'REVALIDATED';
+
+  // 3) transferSize 0 — büyük ihtimalle disk cache
+  if (ts === 0 && st === 200) return 'DISK_CACHE';
+
+  // 4) bodySize 0 + çok hızlı yanıt — disk cache belirtisi
+  if (r.bodySize === 0 && st === 200 && (entry.time || 999) < 5) return 'DISK_CACHE';
+
+  // 5) CDN header'ları
+  const xc = (h['x-cache']||'').toUpperCase();
+  const cf = (h['cf-cache-status']||'').toUpperCase();
+  const ak = (h['x-cache-remote']||'').toUpperCase();
+  const akStatus = (h['akamai-cache-status']||'').toUpperCase();
+
+  const isHit = xc.includes('HIT') || cf === 'HIT' || ak.includes('HIT')
+    || akStatus.includes('HIT')   // "Hit from child", "Hit" vb.
+    || (h['age'] && parseInt(h['age']) > 0 && xc !== 'MISS');
+
+  if (isHit) return 'CDN_HIT';
+
+  // 6) CDN açıkça "cache'lemiyorum" diyor
+  if (akStatus.includes('NOTCACHEABLE')) return 'NOT_CACHEABLE';
+
+  if (xc.includes('MISS') || cf === 'MISS' || akStatus.includes('MISS')) return 'CDN_MISS';
+
+  return 'ORIGIN';
+}
+
+function parseHarData(raw) {
+  const har = JSON.parse(raw);
+  const log = Array.isArray(har.log) ? har.log[0] : har.log;
+  const entries = log.entries;
+  if (!entries || !Array.isArray(entries)) throw new Error('Geçersiz HAR dosyası');
+
+  // Ana domain tespiti: ilk document istek veya ilk entry
+  const getDomain = h => { const p = h.split('.'); return p.length > 2 ? p.slice(-2).join('.') : h; };
+  const firstDoc = entries.find(e => (e.response.headers.find(h => h.name.toLowerCase() === 'content-type')?.value || '').includes('html'));
+  const mainUrl = firstDoc ? firstDoc.request.url : entries[0].request.url;
+  let mainDomain = '';
+  try { mainDomain = getDomain(new URL(mainUrl).hostname); } catch {}
+
+  return entries.map(entry => {
+    const h = getHeaders(entry), r = entry.response;
+    const url = entry.request.url.split('#')[0];
+    const ct = (h['content-type']||'unknown').split(';')[0].trim();
+    let rt = 'other';
+    if (ct.includes('html')) rt = 'document';
+    else if (ct.includes('javascript') || url.endsWith('.js')) rt = 'script';
+    else if (ct.includes('css') || url.endsWith('.css')) rt = 'stylesheet';
+    else if (ct.includes('image') || ct.includes('svg')) rt = 'image';
+    else if (ct.includes('font') || ct.includes('woff')) rt = 'font';
+    else if (ct.includes('json')) rt = 'json/api';
+    else if (ct.includes('xml')) rt = 'xml';
+
+    // Size: bodySize is often -1 in Chrome HAR; fallback to content.size
+    const bodySize = r.bodySize;
+    const contentSize = r.content?.size || 0;
+    const size = (bodySize > 0) ? bodySize : (contentSize > 0 ? contentSize : 0);
+    const transferSize = r._transferSize ?? (bodySize > 0 ? bodySize : 0);
+
+    const cc = h['cache-control'] || 'N/A';
+    const ttl = extractTTL(cc);
+
+    return {
+      url, shortUrl: shortUrl(url), method: entry.request.method,
+      status: r.status, contentType: ct, resourceType: rt,
+      cacheSource: detectCache(entry),
+      cacheControl: cc,
+      etag: !!h['etag'], 
+      cdnHeader: h['akamai-cache-status'] || h['x-cache'] || h['cf-cache-status'] || h['x-cache-remote'] || 'N/A',
+      size, transferSize,
+      time: entry.time || 0,
+      ttl, ttlHuman: humanizeTTL(ttl),
+      cachedBy: detectProvider(entry, h),
+      domain: (() => { try { return new URL(url).hostname; } catch { return ''; } })(),
+      party: (() => {
+        try {
+          const host = new URL(url).hostname;
+          return getDomain(host) === mainDomain ? '1st' : '3rd';
+        } catch { return '3rd'; }
+      })(),
+    };
+  });
+}
+
+function extractTTL(cc) {
+  if (!cc || cc === 'N/A') return null;
+  const m = cc.match(/max-age=(\d+)/);
+  return m ? parseInt(m[1]) : null;
+}
+
+function humanizeTTL(s) {
+  if (s === null || s === undefined) return '\u2014';
+  if (s === 0) return '0';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s/60)}dk`;
+  if (s < 86400) return `~${(s/3600).toFixed(1)} saat`;
+  if (s < 604800) return `~${(s/86400).toFixed(1)} g\u00fcn`;
+  if (s < 2592000) return `~${Math.round(s/604800)} hafta`;
+  if (s < 31536000) return `~${Math.round(s/2592000)} ay`;
+  return `~${(s/31536000).toFixed(1)} y\u0131l`;
+}
+
+function detectProvider(entry, h) {
+  const url = entry.request.url;
+  const server = (h['server']||'').toLowerCase();
+  const xCache = (h['x-cache']||'').toLowerCase();
+  const via = (h['via']||'').toLowerCase();
+  const cfStatus = h['cf-cache-status'];
+  const akamaiCacheStatus = h['akamai-cache-status'];
+  const akamaiGrn = h['akamai-grn'];
+  const nextCache = h['x-nextjs-cache'];   // Next.js ISR cache header
+  const fc = entry._fromCache || '';
+
+  // Browser / Service Worker — tek katman
+  if (fc === 'memory') return 'Browser (Memory)';
+  if (fc === 'disk') return 'Browser (Disk)';
+  if (entry._was_fetched_via_service_worker) return 'Service Worker';
+
+  // --- CDN katmanı tespiti ---
+  let cdn = null;
+  if (akamaiCacheStatus || akamaiGrn || server.includes('akamaighost') || server.includes('akamainetstorage') || xCache.includes('akamaitechnologies')) {
+    cdn = 'Akamai CDN';
+  } else if (server === 'cloudflare' || server.startsWith('cloudflare') || cfStatus) {
+    cdn = 'Cloudflare';
+  } else if (xCache.includes('cloudfront') || via.includes('cloudfront')) {
+    cdn = 'CloudFront';
+  }
+
+  // --- Uygulama/framework katmanı tespiti ---
+  let app = null;
+  if (nextCache) {
+    // x-nextjs-cache: HIT | MISS | STALE | REVALIDATED — Next.js ISR
+    app = `Next.js (${nextCache})`;
+  } else if (url.includes('/_next/static/')) {
+    app = 'Next.js (Static)';
+  } else if (url.includes('/_next/image/')) {
+    app = 'Next.js (Image)';
+  } else if (server === 'istio-envoy') {
+    app = 'Istio/Envoy';
+  } else if (server === 'nginx') {
+    app = 'Nginx';
+  } else if (server === 'openresty') {
+    app = 'OpenResty';
+  } else if (server === 'amazons3') {
+    app = 'Amazon S3';
+  } else if (server === 'google tag manager' || server === 'sffe' || server === 'cafe' || server === 'golfe2') {
+    app = 'Google';
+  } else if (server.includes('proxygen')) {
+    app = 'Meta/Facebook';
+  } else if (server && server !== 'n/a') {
+    app = server.charAt(0).toUpperCase() + server.slice(1);
+  }
+
+  // İkisi de varsa birleştir: "Akamai CDN → Next.js (HIT)"
+  if (cdn && app) return `${cdn} \u2192 ${app}`;
+  if (cdn) return cdn;
+  if (app) return app;
+  return '\u2014';
+}
+
+// ══════════════════════════════════════════════
+//  CONSTANTS
+// ══════════════════════════════════════════════
+
+const COLORS = {
+  MEMORY_CACHE:'#22c55e', DISK_CACHE:'#3b82f6', SERVICE_WORKER:'#a855f7',
+  REVALIDATED:'#eab308', CDN_HIT:'#f97316', CDN_MISS:'#f59e0b', NOT_CACHEABLE:'#ec4899', ORIGIN:'#ef4444'
+};
+const LABELS = {
+  MEMORY_CACHE:'Memory Cache', DISK_CACHE:'Disk Cache', SERVICE_WORKER:'Service Worker',
+  REVALIDATED:'Revalidated (304)', CDN_HIT:'CDN Hit', CDN_MISS:'CDN Miss', NOT_CACHEABLE:'Not Cacheable', ORIGIN:'Origin'
+};
+const BADGE = {
+  MEMORY_CACHE:'badge-green', DISK_CACHE:'badge-blue', SERVICE_WORKER:'badge-purple',
+  REVALIDATED:'badge-yellow', CDN_HIT:'badge-orange', CDN_MISS:'badge-orange', NOT_CACHEABLE:'badge-pink', ORIGIN:'badge-red'
+};
+const CACHED_SOURCES = ['MEMORY_CACHE','DISK_CACHE','SERVICE_WORKER','CDN_HIT'];
+
+// ══════════════════════════════════════════════
+//  STATS
+// ══════════════════════════════════════════════
+
+function buildStats(results) {
+  const bySource = {}, byType = {};
+  let totalSize = 0, totalTransfer = 0;
+  for (const r of results) {
+    (bySource[r.cacheSource] = bySource[r.cacheSource] || []).push(r);
+    const t = byType[r.resourceType] = byType[r.resourceType] || {count:0,cached:0,totalSize:0};
+    t.count++; t.totalSize += Math.max(r.size,0);
+    if (CACHED_SOURCES.includes(r.cacheSource)) t.cached++;
+    totalSize += Math.max(r.size,0);
+    totalTransfer += Math.max(r.transferSize,0);
+  }
+  const cachedCount = results.filter(r => CACHED_SOURCES.includes(r.cacheSource)).length;
+  return { bySource, byType, total: results.length, cachedCount, totalSize, totalTransfer };
+}
+
+function buildComparison(cold, warm) {
+  const cm = {}, wm = {};
+  for (const r of cold) cm[r.url] = r;
+  for (const r of warm) wm[r.url] = r;
+  const common = Object.keys(cm).filter(u => wm[u]);
+  let cachedOnRevisit = 0, revalidated = 0;
+  const stillNotCached = [];
+  for (const url of common) {
+    const c = cm[url], w = wm[url];
+    const isCold = ['ORIGIN','CDN_MISS'].includes(c.cacheSource);
+    if (isCold && ['MEMORY_CACHE','DISK_CACHE','SERVICE_WORKER'].includes(w.cacheSource)) cachedOnRevisit++;
+    else if (c.cacheSource==='ORIGIN' && w.cacheSource==='REVALIDATED') revalidated++;
+    else if (isCold && ['ORIGIN','CDN_MISS'].includes(w.cacheSource)) stillNotCached.push({cold:c,warm:w});
+  }
+  const ct = cold.reduce((s,r)=>s+Math.max(r.transferSize,0),0);
+  const wt = warm.reduce((s,r)=>s+Math.max(r.transferSize,0),0);
+  return { cachedOnRevisit, revalidated, stillNotCached, coldTransfer:ct, warmTransfer:wt, saved:ct-wt };
+}
+
+// ══════════════════════════════════════════════
+//  RENDERERS
+// ══════════════════════════════════════════════
+
+function renderDonut(bySource, total) {
+  const entries = Object.entries(bySource).sort((a,b) => b[1].length - a[1].length);
+  let offset = 0; const r=70, cx=100, cy=100, circ=2*Math.PI*r;
+  const circles = entries.map(([src,items]) => {
+    const pct=items.length/total, dl=pct*circ, doff=-offset*circ; offset+=pct;
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${COLORS[src]||'#666'}" stroke-width="24" stroke-dasharray="${dl} ${circ-dl}" stroke-dashoffset="${doff}"/>`;
+  }).join('');
+  const legend = entries.map(([src,items]) => {
+    const pct=((items.length/total)*100).toFixed(1);
+    return `<div class="legend-item"><span class="legend-dot" style="background:${COLORS[src]}"></span><span class="legend-count">${items.length}</span><span>${LABELS[src]||src}</span><span style="color:var(--text-muted)">(${pct}%)</span></div>`;
+  }).join('');
+  return `<div class="donut-container"><svg class="donut-svg" viewBox="0 0 200 200"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--surface2)" stroke-width="24"/>${circles}<text x="${cx}" y="${cy-8}" text-anchor="middle" fill="var(--text)" font-size="28" font-weight="700">${total}</text><text x="${cx}" y="${cy+14}" text-anchor="middle" fill="var(--text-muted)" font-size="11">istek</text></svg><div class="donut-legend">${legend}</div></div>`;
+}
+
+function renderBars(byType) {
+  const entries = Object.entries(byType).sort((a,b)=>b[1].count-a[1].count);
+  const max = Math.max(...entries.map(([,v])=>v.count));
+  return entries.map(([type,info]) => {
+    const cp = info.count>0 ? ((info.cached/info.count)*100).toFixed(0) : 0;
+    const wp = ((info.count/max)*100).toFixed(1);
+    const col = parseInt(cp)>=80?'var(--green)':parseInt(cp)>=50?'var(--yellow)':'var(--red)';
+    return `<div class="bar-row"><div class="bar-label">${type}</div><div class="bar-track"><div class="bar-fill" style="width:${wp}%;background:${col}">${info.count} istek · cache ${cp}%</div></div><div class="bar-value">${formatSize(info.totalSize)}</div></div>`;
+  }).join('');
+}
+
+function renderStatsTab(stats, title) {
+  const cp = ((stats.cachedCount/stats.total)*100).toFixed(1);
+  const uc = stats.total - stats.cachedCount;
+  return `
+    <div class="stat-row">
+      <div class="stat-box cyan"><div class="value">${stats.total}</div><div class="label">Toplam İstek</div></div>
+      <div class="stat-box green"><div class="value">${stats.cachedCount}</div><div class="label">Cache'lenen</div></div>
+      <div class="stat-box red"><div class="value">${uc}</div><div class="label">Cache'lenmeyen</div></div>
+      <div class="stat-box blue"><div class="value">${cp}%</div><div class="label">Cache Oranı</div></div>
+      <div class="stat-box orange"><div class="value">${formatSize(stats.totalTransfer)}</div><div class="label">Transfer</div></div>
+    </div>
+    <div class="card-grid">
+      <div class="card"><div class="card-title">🍩 Cache Kaynağı Dağılımı</div>${renderDonut(stats.bySource, stats.total)}</div>
+      <div class="card"><div class="card-title">📊 Resource Type Cache Oranları</div><div class="bar-chart">${renderBars(stats.byType)}</div></div>
+    </div>`;
+}
+
+function renderCompare(cs, ws, comp) {
+  const sp = comp.coldTransfer>0?((comp.saved/comp.coldTransfer)*100).toFixed(1):'0';
+  let html = `
+    <div class="stat-row">
+      <div class="stat-box green"><div class="value">${comp.cachedOnRevisit}</div><div class="label">Tekrarda Cache'lenen</div></div>
+      <div class="stat-box yellow"><div class="value">${comp.revalidated}</div><div class="label">304 Revalidated</div></div>
+      <div class="stat-box red"><div class="value">${comp.stillNotCached.length}</div><div class="label">Hiç Cache'lenmeyen</div></div>
+      <div class="stat-box cyan"><div class="value">${sp}%</div><div class="label">Transfer Tasarrufu</div></div>
+    </div>
+    <div class="card-grid">
+      <div class="card"><div class="card-title">📦 İlk Ziyaret — ${cs.total} istek</div>${renderDonut(cs.bySource,cs.total)}</div>
+      <div class="card"><div class="card-title">♻️ Tekrar Ziyaret — ${ws.total} istek</div>${renderDonut(ws.bySource,ws.total)}</div>
+    </div>
+    <div class="card"><div class="card-title">📊 Transfer Karşılaştırma</div><div class="bar-chart">
+      <div class="bar-row"><div class="bar-label">İlk Ziyaret</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--red)">${formatSize(comp.coldTransfer)}</div></div><div class="bar-value"></div></div>
+      <div class="bar-row"><div class="bar-label">Tekrar Ziyaret</div><div class="bar-track"><div class="bar-fill" style="width:${100-parseFloat(sp)}%;background:var(--green)">${formatSize(comp.warmTransfer)}</div></div><div class="bar-value"></div></div>
+      <div class="bar-row"><div class="bar-label">💰 Tasarruf</div><div class="bar-track"><div class="bar-fill" style="width:${sp}%;background:var(--cyan)">${formatSize(Math.max(comp.saved,0))}</div></div><div class="bar-value"></div></div>
+    </div></div>`;
+
+  if (comp.stillNotCached.length > 0) {
+    html += `<div class="card"><div class="card-title">🔴 Hiç Cache'lenmeyen Kaynaklar</div><div class="table-wrapper"><table><thead><tr><th>URL</th><th>Tür</th><th>Boyut</th><th>Cache-Control</th></tr></thead><tbody>
+      ${comp.stillNotCached.sort((a,b)=>b.cold.size-a.cold.size).map(({cold:c})=>`<tr><td class="url-cell" title="${esc(c.url)}">${esc(c.shortUrl)}</td><td>${c.resourceType}</td><td>${formatSize(c.size)}</td><td style="font-family:monospace;font-size:11px" title="${esc(c.cacheControl)}">${esc(humanizeCC(c.cacheControl))}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+  }
+  return html;
+}
+
+const TABLE_COLS = [
+  { key: 'idx', label: '#', defaultOn: true },
+  { key: 'url', label: 'URL', defaultOn: true },
+  { key: 'status', label: 'Status', defaultOn: false },
+  { key: 'type', label: 'Tür', defaultOn: true },
+  { key: 'cache', label: 'İlk Ziyaret', defaultOn: true },
+  { key: 'size', label: 'Boyut', defaultOn: true },
+  { key: 'time', label: 'Süre (ms)', defaultOn: false },
+  { key: 'cc', label: 'Cache-Control', defaultOn: false },
+  { key: 'ttl', label: 'TTL', defaultOn: true },
+  { key: 'cachedby', label: 'Cached By', defaultOn: true },
+];
+
+function getVisibleCols() {
+  const saved = localStorage.getItem('har-visible-cols');
+  if (saved) try { return JSON.parse(saved); } catch {}
+  // Default: use defaultOn from TABLE_COLS, adapt for screen width
+  const isSmall = window.innerWidth < 900;
+  return TABLE_COLS.reduce((m, c) => {
+    m[c.key] = isSmall ? c.defaultOn : true;
+    return m;
+  }, {});
+}
+
+function saveVisibleCols(cols) {
+  localStorage.setItem('har-visible-cols', JSON.stringify(cols));
+}
+
+function renderColToggle(hasWarm) {
+  const cols = getVisibleCols();
+  const allCols = [...TABLE_COLS];
+  if (hasWarm) allCols.push({ key: 'warm', label: 'Tekrar Ziyaret', defaultOn: true });
+
+  const checks = allCols.map(c =>
+    `<label><input type="checkbox" ${cols[c.key] !== false ? 'checked' : ''} onchange="toggleCol('${c.key}', this.checked)"> ${c.label}</label>`
+  ).join('');
+
+  return `<div class="col-toggle-wrap">
+    <button class="col-toggle-btn" onclick="document.getElementById('col-panel').classList.toggle('open')">⚙️ Sütunlar</button>
+    <div class="col-toggle-panel" id="col-panel">${checks}</div>
+  </div>`;
+}
+
+function toggleCol(key, visible) {
+  const cols = getVisibleCols();
+  cols[key] = visible;
+  saveVisibleCols(cols);
+  document.querySelectorAll(`[data-col="${key}"]`).forEach(el => {
+    el.classList.toggle('col-hidden', !visible);
+  });
+}
+
+function applyColVisibility() {
+  const cols = getVisibleCols();
+  for (const key of Object.keys(cols)) {
+    document.querySelectorAll(`[data-col="${key}"]`).forEach(el => {
+      el.classList.toggle('col-hidden', !cols[key]);
+    });
+  }
+}
+
+function renderDetails(cold, warm) {
+  const sources = [...new Set(cold.map(r=>r.cacheSource))];
+  const types = [...new Set(cold.map(r=>r.resourceType))];
+  const filterBtns = [...sources.map(s=>`<button class="filter-btn" onclick="toggleFilter('${s}')">${LABELS[s]||s}</button>`),...types.map(t=>`<button class="filter-btn" onclick="toggleFilter('${t}')">${t}</button>`)].join('');
+  const hasWarm = !!warm;
+  const ci = { idx:0, url:1, status:2, type:3, cache:4, size:5, time:6, cc:7, ttl:8, cachedby:9, warm:10 };
+
+  return `<div class="card"><div class="card-title">📋 Tüm İstekler</div>
+    <div class="table-toolbar">
+      <input class="search-box" id="search-input" type="text" placeholder="🔍 URL ile ara..." oninput="applyFilters()">
+      ${renderColToggle(hasWarm)}
+    </div>
+    <div class="filters">${filterBtns}</div>
+    <div class="table-wrapper"><table id="details-table"><thead><tr>
+      <th data-col="idx" onclick="sortTable('details-table',${ci.idx})">#</th>
+      <th data-col="url" onclick="sortTable('details-table',${ci.url})">URL</th>
+      <th data-col="status" onclick="sortTable('details-table',${ci.status})">Status</th>
+      <th data-col="type" onclick="sortTable('details-table',${ci.type})">Tür</th>
+      <th data-col="cache" onclick="sortTable('details-table',${ci.cache})">İlk Ziyaret</th>
+      <th data-col="size" onclick="sortTable('details-table',${ci.size})">Boyut</th>
+      <th data-col="time" onclick="sortTable('details-table',${ci.time})">Süre (ms)</th>
+      <th data-col="cc" onclick="sortTable('details-table',${ci.cc})">Cache-Control</th>
+      <th data-col="ttl" onclick="sortTable('details-table',${ci.ttl})">TTL</th>
+      <th data-col="cachedby" onclick="sortTable('details-table',${ci.cachedby})">Cached By</th>
+      ${hasWarm ? `<th data-col="warm" onclick="sortTable('details-table',${ci.warm})">Tekrar Ziyaret</th>` : ''}
+    </tr></thead><tbody>
+      ${cold.map((r,i) => {
+        const we = warm ? warm.find(w=>w.url===r.url) : null;
+        let warmCell = '—';
+        if (we) {
+          const src = we.cacheSource;
+          const badge = BADGE[src] || '';
+          const label = LABELS[src] || src;
+          // Süre farkı
+          const timeDiff = r.time - we.time;
+          const faster = timeDiff > 5;
+          const timeInfo = faster
+            ? `<span style="color:var(--green);font-size:11px"> ⚡${timeDiff.toFixed(0)}ms hızlı</span>`
+            : '';
+          // Boyut farkı
+          const sizeSaved = r.transferSize - we.transferSize;
+          const sizeInfo = sizeSaved > 100
+            ? `<span style="color:var(--green);font-size:11px"> ↓${formatSize(sizeSaved)}</span>`
+            : '';
+          // cachedBy bilgisi (kısa)
+          const by = we.cachedBy && we.cachedBy !== '—' ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${esc(we.cachedBy)}</div>` : '';
+          warmCell = `<span class="badge ${badge}">${label}</span>${timeInfo}${sizeInfo}${by}`;
+        }
+        return `<tr data-url="${esc(r.url)}" data-cache="${r.cacheSource}" data-type="${r.resourceType}">
+          <td data-col="idx">${i+1}</td>
+          <td data-col="url" class="url-cell" title="${esc(r.url)}">${esc(r.shortUrl)}</td>
+          <td data-col="status">${r.status}</td>
+          <td data-col="type">${r.resourceType}</td>
+          <td data-col="cache"><span class="badge ${BADGE[r.cacheSource]||''}">${LABELS[r.cacheSource]||r.cacheSource}</span></td>
+          <td data-col="size" data-value="${r.size}">${formatSize(r.size)}</td>
+          <td data-col="time" data-value="${r.time}">${r.time.toFixed(0)}</td>
+          <td data-col="cc" style="font-family:monospace;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.cacheControl)}">${esc(humanizeCC(r.cacheControl))}</td>
+          <td data-col="ttl" data-value="${r.ttl ?? -1}" style="white-space:nowrap">${r.ttlHuman || '—'}</td>
+          <td data-col="cachedby"><span class="badge badge-cyan" style="font-size:10px">${esc(r.cachedBy || '—')}</span></td>
+          ${hasWarm ? `<td data-col="warm" style="white-space:normal;min-width:160px">${warmCell}</td>` : ''}
+        </tr>`;
+      }).join('')}
+    </tbody></table></div></div>`;
+}
+
+// ══════════════════════════════════════════════
+//  CACHE LAYERS TAB
+// ══════════════════════════════════════════════
+
+function renderCacheLayers(cold, warm) {
+  const RESOURCE_TYPES = ['script','stylesheet','image','font','json/api','document','other'];
+  const RESOURCE_EMOJI = {script:'📜',stylesheet:'🎨',image:'🖼️',font:'🔤','json/api':'🔌',document:'📄',other:'📎',xml:'📎'};
+
+  // Cache layer belirleme — her istek için hangi katmanda cache'lendi
+  function getCacheLayer(r) {
+    if (['MEMORY_CACHE','DISK_CACHE'].includes(r.cacheSource)) return 'browser';
+    if (r.cacheSource === 'SERVICE_WORKER') return 'sw';
+    if (r.cacheSource === 'CDN_HIT') return 'cdn';
+    if (r.cacheSource === 'NOT_CACHEABLE') return 'not_cacheable';
+    if (r.cacheSource === 'REVALIDATED') return 'revalidated';
+    if (r.cacheSource === 'CDN_MISS') return 'cdn_miss';
+    return 'origin';
+  }
+
+  // CDN provider tespiti (cachedBy'dan CDN kısmını çıkar)
+  function getCdnProvider(r) {
+    const cb = r.cachedBy || '';
+    if (cb.startsWith('Akamai')) return 'Akamai';
+    if (cb.startsWith('Cloudflare')) return 'Cloudflare';
+    if (cb.startsWith('CloudFront')) return 'CloudFront';
+    return null;
+  }
+
+  // App layer tespiti (cachedBy'dan → sonrasını çıkar)
+  function getAppLayer(r) {
+    const cb = r.cachedBy || '';
+    const arrow = cb.indexOf('\u2192');
+    if (arrow > -1) return cb.substring(arrow + 2).trim();
+    if (cb.includes('Next.js')) return cb;
+    return null;
+  }
+
+  function buildLayerData(results) {
+    const data = { browser: [], cdn: [], sw: [], revalidated: [], cdn_miss: [], not_cacheable: [], origin: [] };
+    const byType = {};
+    const firstParty = [];
+    const thirdParty = [];
+
+    for (const r of results) {
+      const layer = getCacheLayer(r);
+      data[layer].push(r);
+      // Resource type matrix
+      const key = r.resourceType;
+      if (!byType[key]) byType[key] = { browser:0, cdn:0, sw:0, revalidated:0, cdn_miss:0, not_cacheable:0, origin:0, total:0 };
+      byType[key][layer]++;
+      byType[key].total++;
+      // Party
+      if (r.party === '1st') firstParty.push(r);
+      else thirdParty.push(r);
+    }
+    return { data, byType, firstParty, thirdParty, total: results.length };
+  }
+
+  function renderMatrix(label, results) {
+    const ld = buildLayerData(results);
+    const d = ld.data;
+    const total = ld.total;
+
+    // Özet kartlar
+    const cached = d.browser.length + d.cdn.length + d.sw.length;
+    const ratio = total > 0 ? ((cached/total)*100).toFixed(1) : '0';
+
+    let html = `<div class="card"><div class="card-title">${label} — ${total} istek</div>`;
+
+    // 1st Party / 3rd Party ayrımı
+    const fp = ld.firstParty.length;
+    const tp = ld.thirdParty.length;
+    html += `<div style="display:flex;gap:12px;margin-bottom:16px;font-size:13px">
+      <span style="color:var(--cyan)">🏠 1st Party: <b>${fp}</b></span>
+      <span style="color:var(--text-muted)">🌐 3rd Party: <b>${tp}</b></span>
+    </div>`;
+
+    // Katman özet bar'ları
+    const layers = [
+      { key:'browser', label:'🖥️ Browser Cache', color:'var(--green)', items:d.browser },
+      { key:'cdn', label:'🌍 CDN Cache', color:'var(--orange)', items:d.cdn },
+      { key:'sw', label:'⚙️ Service Worker', color:'var(--purple)', items:d.sw },
+      { key:'revalidated', label:'🔄 Revalidated (304)', color:'var(--yellow)', items:d.revalidated },
+      { key:'cdn_miss', label:'❌ CDN Miss', color:'var(--red)', items:d.cdn_miss },
+      { key:'not_cacheable', label:'🚫 Not Cacheable', color:'var(--pink)', items:d.not_cacheable },
+      { key:'origin', label:'🔴 Origin', color:'var(--red)', items:d.origin },
+    ];
+
+    html += `<div class="bar-chart" style="margin-bottom:20px">`;
+    for (const l of layers) {
+      if (l.items.length === 0) continue;
+      const pct = ((l.items.length / total) * 100).toFixed(1);
+      const w = Math.max(parseFloat(pct), 3);
+      const sz = l.items.reduce((s,r) => s + Math.max(r.size,0), 0);
+      html += `<div class="bar-row">
+        <div class="bar-label">${l.label}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${l.color}">${l.items.length} (${pct}%)</div></div>
+        <div class="bar-value">${formatSize(sz)}</div>
+      </div>`;
+    }
+    html += `</div>`;
+
+    // Resource Type × Cache Layer matrix tablosu
+    html += `<div class="card-title" style="margin-top:16px">📊 Resource Type × Cache Katmanı</div>`;
+    html += `<div class="table-wrapper"><table><thead><tr>
+      <th>Tür</th><th style="color:var(--green)">Browser</th><th style="color:var(--orange)">CDN Hit</th>
+      <th style="color:var(--yellow)">304</th><th style="color:var(--pink)">Not Cacheable</th>
+      <th style="color:var(--red)">CDN Miss</th><th style="color:var(--red)">Origin</th><th>Toplam</th><th>Cache %</th>
+    </tr></thead><tbody>`;
+    for (const type of RESOURCE_TYPES) {
+      const t = ld.byType[type];
+      if (!t) continue;
+      const cr = t.browser + t.cdn + t.sw;
+      const cp = t.total > 0 ? ((cr/t.total)*100).toFixed(0) : '0';
+      const cpColor = parseInt(cp) >= 80 ? 'var(--green)' : parseInt(cp) >= 50 ? 'var(--yellow)' : 'var(--red)';
+      html += `<tr>
+        <td><b>${RESOURCE_EMOJI[type]||''} ${type}</b></td>
+        <td style="color:var(--green)">${t.browser||'—'}</td>
+        <td style="color:var(--orange)">${t.cdn||'—'}</td>
+        <td style="color:var(--yellow)">${t.revalidated||'—'}</td>
+        <td style="color:var(--pink)">${t.not_cacheable||'—'}</td>
+        <td>${t.cdn_miss||'—'}</td>
+        <td style="color:var(--red)">${t.origin||'—'}</td>
+        <td>${t.total}</td>
+        <td style="color:${cpColor};font-weight:700">${cp}%</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+
+    // CDN Provider breakdown
+    const cdnProviders = {};
+    for (const r of results) {
+      const p = getCdnProvider(r);
+      if (p) {
+        if (!cdnProviders[p]) cdnProviders[p] = { hit:0, miss:0, notcache:0, total:0, size:0 };
+        cdnProviders[p].total++;
+        cdnProviders[p].size += Math.max(r.size, 0);
+        if (r.cacheSource === 'CDN_HIT') cdnProviders[p].hit++;
+        else if (r.cacheSource === 'CDN_MISS') cdnProviders[p].miss++;
+        else if (r.cacheSource === 'NOT_CACHEABLE') cdnProviders[p].notcache++;
+      }
+    }
+    if (Object.keys(cdnProviders).length > 0) {
+      html += `<div class="card-title" style="margin-top:20px">🌍 CDN Provider Detayı</div>`;
+      html += `<div class="table-wrapper"><table><thead><tr><th>CDN</th><th>Toplam</th><th style="color:var(--green)">Hit</th><th style="color:var(--red)">Miss</th><th style="color:var(--pink)">Not Cacheable</th><th>Hit %</th><th>Boyut</th></tr></thead><tbody>`;
+      for (const [name, info] of Object.entries(cdnProviders).sort((a,b)=>b[1].total-a[1].total)) {
+        const hp = info.total > 0 ? ((info.hit/info.total)*100).toFixed(0) : '0';
+        html += `<tr><td><b>${name}</b></td><td>${info.total}</td><td style="color:var(--green)">${info.hit}</td><td style="color:var(--red)">${info.miss}</td><td style="color:var(--pink)">${info.notcache}</td><td style="font-weight:700">${hp}%</td><td>${formatSize(info.size)}</td></tr>`;
+      }
+      html += `</tbody></table></div>`;
+    }
+
+    // App/Framework layer
+    const appLayers = {};
+    for (const r of results) {
+      const a = getAppLayer(r);
+      if (a) {
+        if (!appLayers[a]) appLayers[a] = { count:0, cached:0, size:0 };
+        appLayers[a].count++;
+        appLayers[a].size += Math.max(r.size, 0);
+        if (['CDN_HIT','MEMORY_CACHE','DISK_CACHE'].includes(r.cacheSource)) appLayers[a].cached++;
+      }
+    }
+    if (Object.keys(appLayers).length > 0) {
+      html += `<div class="card-title" style="margin-top:20px">⚙️ Origin / Framework Katmanı</div>`;
+      html += `<div class="table-wrapper"><table><thead><tr><th>Framework/Server</th><th>İstek</th><th>Cache'lenen</th><th>Boyut</th></tr></thead><tbody>`;
+      for (const [name, info] of Object.entries(appLayers).sort((a,b)=>b[1].count-a[1].count)) {
+        html += `<tr><td><b>${esc(name)}</b></td><td>${info.count}</td><td>${info.cached}</td><td>${formatSize(info.size)}</td></tr>`;
+      }
+      html += `</tbody></table></div>`;
+    }
+
+    // 3rd party origin'ler
+    const thirdOrigins = results.filter(r => r.party === '3rd' && ['ORIGIN','NOT_CACHEABLE','CDN_MISS'].includes(r.cacheSource));
+    if (thirdOrigins.length > 0) {
+      const byDomain = {};
+      for (const r of thirdOrigins) {
+        if (!byDomain[r.domain]) byDomain[r.domain] = { count:0, size:0, types: new Set() };
+        byDomain[r.domain].count++;
+        byDomain[r.domain].size += Math.max(r.transferSize, 0);
+        byDomain[r.domain].types.add(r.resourceType);
+      }
+      html += `<div class="card-title" style="margin-top:20px">🌐 3rd Party Cache'lenmeyen Kaynaklar</div>`;
+      html += `<div class="table-wrapper"><table><thead><tr><th>Domain</th><th>İstek</th><th>Transfer</th><th>Türler</th></tr></thead><tbody>`;
+      for (const [dom, info] of Object.entries(byDomain).sort((a,b)=>b[1].count-a[1].count)) {
+        html += `<tr><td>${esc(dom)}</td><td>${info.count}</td><td>${formatSize(info.size)}</td><td>${[...info.types].join(', ')}</td></tr>`;
+      }
+      html += `</tbody></table></div>`;
+    }
+
+    html += `</div>`;
+    return html;
+  }
+
+  let output = renderMatrix('📦 İlk Ziyaret', cold);
+  if (warm) {
+    output += renderMatrix('♻️ Tekrar Ziyaret', warm);
+
+    // Değişim özeti
+    const coldLd = buildLayerData(cold);
+    const warmLd = buildLayerData(warm);
+    const cd = coldLd.data, wd = warmLd.data;
+    output += `<div class="card"><div class="card-title">📈 İlk → Tekrar Ziyaret Değişimi</div>
+      <div class="table-wrapper"><table><thead><tr><th>Katman</th><th>İlk Ziyaret</th><th>Tekrar Ziyaret</th><th>Değişim</th></tr></thead><tbody>`;
+    const layerKeys = [['browser','🖥️ Browser'],['cdn','🌍 CDN Hit'],['revalidated','🔄 304'],['not_cacheable','🚫 Not Cacheable'],['cdn_miss','❌ CDN Miss'],['origin','🔴 Origin']];
+    for (const [k, label] of layerKeys) {
+      const c = cd[k]?.length||0, w = wd[k]?.length||0;
+      const diff = w - c;
+      const diffStr = diff > 0 ? `<span style="color:var(--green)">+${diff}</span>` : diff < 0 ? `<span style="color:var(--red)">${diff}</span>` : '—';
+      output += `<tr><td>${label}</td><td>${c}</td><td>${w}</td><td>${diffStr}</td></tr>`;
+    }
+    output += `</tbody></table></div></div>`;
+  }
+
+  return output;
+}
+
+function renderRecs(comp, cold) {
+  const recs = [];
+  const ut = {};
+  for (const {cold:c} of comp.stillNotCached) ut[c.resourceType] = (ut[c.resourceType]||0)+1;
+  for (const [type,count] of Object.entries(ut).sort((a,b)=>b[1]-a[1])) {
+    if (type==='image') recs.push({sev:'critical',title:`${count} image cache'lenmiyor`,desc:'Statik image\'lar için <code>Cache-Control: public, max-age=31536000, immutable</code> kullanın.'});
+    else if (type==='script'||type==='stylesheet') recs.push({sev:'critical',title:`${count} ${type} cache'lenmiyor`,desc:'Fingerprinted filename (ör: <code>app.a1b2c3.js</code>) + <code>max-age=31536000</code> kullanın. 3rd-party scriptler için self-hosting düşünülebilir.'});
+    else if (type==='font') recs.push({sev:'critical',title:`${count} font cache'lenmiyor`,desc:'Font dosyaları için <code>Cache-Control: public, max-age=31536000, immutable</code> kullanın.'});
+    else if (type==='json/api') recs.push({sev:'warning',title:`${count} API response cache'lenmiyor`,desc:'Nadiren değişen API response\'ları için <code>stale-while-revalidate</code> düşünülebilir.'});
+    else recs.push({sev:'warning',title:`${count} ${type} cache'lenmiyor`,desc:'Cache stratejisi gözden geçirilmeli.'});
+  }
+  const nh = cold.filter(r=>r.cacheControl==='N/A').length;
+  if (nh>0) recs.push({sev:'critical',title:`${nh} istekte Cache-Control header'ı yok`,desc:'Her response\'ta açık bir <code>Cache-Control</code> header\'ı olmalıdır.'});
+  const sp = comp.coldTransfer>0?((comp.saved/comp.coldTransfer)*100).toFixed(1):0;
+  recs.push({sev:'good',title:`Cache ile %${sp} transfer tasarrufu sağlanıyor`,desc:`Warm cache ile ${formatSize(Math.max(comp.saved,0))} tasarruf ediliyor.`});
+
+  return `<div class="card"><div class="card-title">💡 Cache Optimizasyon Önerileri</div>
+    ${recs.map(r=>`<div class="rec-item ${r.sev==='critical'?'critical':r.sev==='good'?'good':''}"><div class="rec-title">${r.sev==='critical'?'🔴':r.sev==='good'?'✅':'🟡'} ${r.title}</div><div class="rec-desc">${r.desc}</div></div>`).join('')}
+  </div>`;
+}
+
+// ══════════════════════════════════════════════
+//  APP STATE & INTERACTIONS
+// ══════════════════════════════════════════════
+
+let files = { cold: null, warm: null };
+let rawData = { cold: null, warm: null };
+
+function toggleTheme() {
+  const t = document.documentElement.getAttribute('data-theme');
+  document.documentElement.setAttribute('data-theme', t==='light'?'dark':'light');
+}
+
+function handleFile(input, type) {
+  const file = input.files[0];
+  if (!file) return;
+  files[type] = file;
+  const zone = document.getElementById('drop-'+type);
+  zone.classList.add('has-file');
+  document.getElementById(type+'-info').textContent = `✅ ${file.name} (${formatSize(file.size)})`;
+  updateAnalyzeBtn();
+}
+
+function removeFile(type) {
+  files[type] = null; rawData[type] = null;
+  const zone = document.getElementById('drop-'+type);
+  zone.classList.remove('has-file');
+  document.getElementById(type+'-info').textContent = '';
+  document.getElementById('file-'+type).value = '';
+  updateAnalyzeBtn();
+}
+
+function updateAnalyzeBtn() {
+  document.getElementById('analyze-btn').disabled = !files.cold;
+}
+
+// Drag & drop
+['cold','warm'].forEach(type => {
+  const zone = document.getElementById('drop-'+type);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith('.har')) {
+      files[type] = file;
+      zone.classList.add('has-file');
+      document.getElementById(type+'-info').textContent = `✅ ${file.name} (${formatSize(file.size)})`;
+      updateAnalyzeBtn();
+    }
+  });
+});
+
+async function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+async function analyze() {
+  const btn = document.getElementById('analyze-btn');
+  btn.textContent = '⏳ Analiz ediliyor...'; btn.disabled = true;
+
+  try {
+    const coldRaw = await readFile(files.cold);
+    const coldResults = parseHarData(coldRaw);
+    let warmResults = null;
+    if (files.warm) {
+      const warmRaw = await readFile(files.warm);
+      warmResults = parseHarData(warmRaw);
+    }
+
+    const coldStats = buildStats(coldResults);
+    const warmStats = warmResults ? buildStats(warmResults) : null;
+    const comparison = warmResults ? buildComparison(coldResults, warmResults) : null;
+
+    // Build tabs
+    let tabsHtml = `<div class="tabs">
+      <button class="tab active" onclick="switchTab('cold')">📦 İlk Ziyaret</button>`;
+    if (warmResults) tabsHtml += `<button class="tab" onclick="switchTab('warm')">♻️ Tekrar Ziyaret</button>`;
+    if (warmResults) tabsHtml += `<button class="tab" onclick="switchTab('compare')">🔄 Karşılaştırma</button>`;
+    tabsHtml += `<button class="tab" onclick="switchTab('details')">📋 Detaylar</button>`;
+    tabsHtml += `<button class="tab" onclick="switchTab('layers')">🏗️ Cache Katmanları</button>`;
+    if (warmResults) tabsHtml += `<button class="tab" onclick="switchTab('recs')">💡 Öneriler</button>`;
+    tabsHtml += `</div>`;
+
+    // Build content
+    let contentHtml = `<div id="tab-cold" class="tab-content active">${renderStatsTab(coldStats,'İlk Ziyaret')}</div>`;
+    if (warmResults) contentHtml += `<div id="tab-warm" class="tab-content">${renderStatsTab(warmStats,'Tekrar Ziyaret')}</div>`;
+    if (warmResults) contentHtml += `<div id="tab-compare" class="tab-content">${renderCompare(coldStats,warmStats,comparison)}</div>`;
+    contentHtml += `<div id="tab-details" class="tab-content">${renderDetails(coldResults,warmResults)}</div>`;
+    contentHtml += `<div id="tab-layers" class="tab-content">${renderCacheLayers(coldResults,warmResults)}</div>`;
+    if (comparison) contentHtml += `<div id="tab-recs" class="tab-content">${renderRecs(comparison,coldResults)}</div>`;
+
+    document.getElementById('tabs-container').innerHTML = tabsHtml;
+    document.getElementById('report-content').innerHTML = contentHtml;
+    document.getElementById('upload-section').style.display = 'none';
+    document.getElementById('report-section').style.display = 'block';
+    document.getElementById('new-analysis-btn').style.display = 'inline-block';
+
+    // Apply saved column visibility
+    applyColVisibility();
+
+    // Init column resize handles
+    initColResize('details-table');
+
+    // Close col panel on outside click
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('col-panel');
+      if (panel && !e.target.closest('.col-toggle-wrap')) panel.classList.remove('open');
+    });
+
+    // Animate bars
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.bar-fill').forEach(bar => {
+        const w = bar.style.width; bar.style.width = '0%';
+        requestAnimationFrame(() => { bar.style.width = w; });
+      });
+    });
+  } catch (err) {
+    alert('HAR dosyası işlenirken hata oluştu:\n' + err.message);
+  }
+  btn.textContent = '🚀 Analiz Et'; btn.disabled = false;
+}
+
+function resetApp() {
+  document.getElementById('upload-section').style.display = 'flex';
+  document.getElementById('report-section').style.display = 'none';
+  document.getElementById('new-analysis-btn').style.display = 'none';
+  removeFile('cold'); removeFile('warm');
+}
+
+// ══════════════════════════════════════════════
+//  COLUMN RESIZE
+// ══════════════════════════════════════════════
+function initColResize(tableId) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const ths = Array.from(table.tHead.rows[0].cells);
+
+  ths.forEach(th => {
+    if (th.querySelector('.col-resizer')) return;
+    const handle = document.createElement('span');
+    handle.className = 'col-resizer';
+    th.appendChild(handle);
+
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Snapshot current widths and switch to fixed layout
+      const allThs = Array.from(table.tHead.rows[0].cells);
+      const widths = allThs.map(t => t.offsetWidth);
+      table.style.tableLayout = 'fixed';
+      table.style.width = table.offsetWidth + 'px';
+      allThs.forEach((t, i) => t.style.width = widths[i] + 'px');
+
+      const startX = e.clientX;
+      const startW = th.offsetWidth;
+      const startTW = table.offsetWidth;
+      handle.classList.add('active');
+      document.body.classList.add('col-resizing');
+
+      const onMove = e => {
+        const dx = e.clientX - startX;
+        const nw = Math.max(40, startW + dx);
+        th.style.width = nw + 'px';
+        table.style.width = (startTW + nw - startW) + 'px';
+      };
+      const onUp = () => {
+        handle.classList.remove('active');
+        document.body.classList.remove('col-resizing');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    handle.addEventListener('click', e => e.stopPropagation());
+  });
+}
+
+function switchTab(id) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// Table sorting
+let sortState = {};
+function sortTable(tableId, colIndex) {
+  const table = document.getElementById(tableId);
+  const tbody = table.querySelector('tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const th = table.querySelectorAll('th')[colIndex];
+  const key = tableId+'-'+colIndex;
+  const dir = sortState[key]==='asc'?'desc':'asc';
+  sortState[key] = dir;
+  table.querySelectorAll('th').forEach(h => h.classList.remove('sorted-asc','sorted-desc'));
+  th.classList.add('sorted-'+dir);
+  rows.sort((a,b) => {
+    let va = a.cells[colIndex].getAttribute('data-value') || a.cells[colIndex].textContent.trim();
+    let vb = b.cells[colIndex].getAttribute('data-value') || b.cells[colIndex].textContent.trim();
+    const na = parseFloat(va), nb = parseFloat(vb);
+    if (!isNaN(na) && !isNaN(nb)) { va=na; vb=nb; }
+    if (va<vb) return dir==='asc'?-1:1;
+    if (va>vb) return dir==='asc'?1:-1;
+    return 0;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+let activeFilters = new Set();
+function toggleFilter(type) {
+  if (activeFilters.has(type)) activeFilters.delete(type);
+  else activeFilters.add(type);
+  event.target.classList.toggle('active');
+  applyFilters();
+}
+function applyFilters() {
+  const search = (document.getElementById('search-input')?.value||'').toLowerCase();
+  document.querySelectorAll('#details-table tbody tr').forEach(row => {
+    const url = row.getAttribute('data-url')?.toLowerCase()||'';
+    const cache = row.getAttribute('data-cache')||'';
+    const type = row.getAttribute('data-type')||'';
+    const ms = !search || url.includes(search);
+    const mf = activeFilters.size===0 || activeFilters.has(cache) || activeFilters.has(type);
+    row.style.display = ms&&mf ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>
